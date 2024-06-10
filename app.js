@@ -1,94 +1,119 @@
 const express = require('express');
 const cors = require('cors');
-const multer = require('multer');
+const fileUpload = require('express-fileupload');
+const vision = require('@google-cloud/vision');
+const Jimp = require('jimp');
+const path = require('path');
+const fs = require('fs');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { ImageAnnotatorClient } = require('@google-cloud/vision');
-const path = require('path');
-const Jimp = require('jimp');
+
+// Google Cloud setup
+const serviceKey = path.join(__dirname, 'service-account-file.json');
+const client = new vision.ImageAnnotatorClient({
+    keyFilename: serviceKey,
+});
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
+app.use(fileUpload());
+app.use(express.static('uploads'));
 app.use(express.json());
 
-const serviceKey = path.join(__dirname, 'service-account-file.json');
-const visionClient = new ImageAnnotatorClient({
-  keyFilename: serviceKey,
-});
-
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
-
+// Function to scrape SIA license data
 async function scrapeSIALicenses(licenseNo) {
-  try {
-    const response = await axios.post('https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence', {
-      licenseNo: licenseNo
-    });
+    try {
+        const response = await axios.post('https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence', {
+            licenseNo: licenseNo
+        });
 
-    const $ = cheerio.load(response.data);
+        const $ = cheerio.load(response.data);
 
-    const firstName = $('.ax_paragraph').eq(0).next().find('.ax_h5').text().trim();
-    const surname = $('.ax_paragraph').eq(1).next().find('.ax_h5').text().trim();
-    const licenseNumber = $('.ax_paragraph').eq(2).next().find('.ax_h4').text().trim();
-    const role = $('.ax_paragraph').eq(3).next().find('.ax_h4').text().trim();
-    const expiryDate = $('.ax_paragraph:contains("Expiry date")').next().find('.ax_h4').text().trim();
-    const status = $('.ax_paragraph:contains("Status")').next().find('.ax_h4_green').text().trim();
+        const firstName = $('.ax_paragraph').eq(0).next().find('.ax_h5').text().trim();
+        const surname = $('.ax_paragraph').eq(1).next().find('.ax_h5').text().trim();
+        const licenseNumber = $('.ax_paragraph').eq(2).next().find('.ax_h4').text().trim();
+        const role = $('.ax_paragraph').eq(3).next().find('.ax_h4').text().trim();
+        
+        const expiryDate = $('.ax_paragraph:contains("Expiry date")').next().find('.ax_h4').text().trim();
+        const status = $('.ax_paragraph:contains("Status")').next().find('.ax_h4_green').text().trim();
 
-    if (!firstName || !surname || !licenseNumber || !role || !expiryDate || !status) {
-      return { valid: false };
+        if (!firstName || !surname || !licenseNumber || !role || !expiryDate || !status) {
+            return { valid: false };
+        }
+
+        return {
+            valid: true,
+            firstName,
+            surname,
+            licenseNumber,
+            role,
+            expiryDate,
+            status
+        };
+    } catch (error) {
+        console.error('Error scraping SIA website:', error);
+        return { valid: false };
     }
-
-    return {
-      valid: true,
-      firstName,
-      surname,
-      licenseNumber,
-      role,
-      expiryDate,
-      status
-    };
-  } catch (error) {
-    console.error('Error scraping SIA website:', error);
-    return { valid: false };
-  }
 }
 
-app.post('/upload', upload.single('image'), async (req, res) => {
-  try {
-    const [result] = await visionClient.textDetection(req.file.buffer);
-    const detections = result.textAnnotations;
-    const text = detections.length ? detections[0].description : '';
+app.post('/upload', async (req, res) => {
+    if (!req.files || !req.files.image) {
+        return res.status(400).send('No files were uploaded.');
+    }
 
-    const licenseNumberMatch = text.match(/\b\d{16}\b/);
-    const expiryDateMatch = text.match(/\b\d{2} \w{3} \d{4}\b/);
-    const nameMatch = text.match(/(?:[A-Z]\.)+\s+[A-Z][a-z]+/);
+    const image = req.files.image;
+    const uploadPath = path.join(__dirname, 'uploads', image.name);
 
-    const licenseNumber = licenseNumberMatch ? licenseNumberMatch[0] : 'Not Found';
-    const expiryDate = expiryDateMatch ? expiryDateMatch[0] : 'Not Found';
-    const name = nameMatch ? nameMatch[0] : 'Not Found';
+    image.mv(uploadPath, async (err) => {
+        if (err) {
+            return res.status(500).send(err);
+        }
 
-    const scrapedData = await scrapeSIALicenses(licenseNumber.replace(/\s+/g, ''));
+        try {
+            const [result] = await client.textDetection(uploadPath);
+            const detections = result.textAnnotations;
+            const extractedText = detections[0] ? detections[0].description : '';
 
-    const image = await Jimp.read(req.file.buffer);
-    image.print(Jimp.FONT_SANS_32_BLACK, 10, 10, 'Virtulum Checks');
-    const imageName = `uploads/${Date.now()}_${req.file.originalname}`;
-    await image.writeAsync(imageName);
+            // Assuming license number is the first 16-digit number found in the text
+            const licenseNumberMatch = extractedText.match(/\b\d{16}\b/);
+            const licenseNumber = licenseNumberMatch ? licenseNumberMatch[0] : 'Not Found';
 
-    res.json({
-      licenseNumber,
-      expiryDate,
-      name: scrapedData.valid ? `${scrapedData.firstName} ${scrapedData.surname}` : 'Not Found',
-      status: scrapedData.valid ? 'Valid' : 'Invalid',
-      imagePath: imageName
+            // Assuming expiry date is in the format 'EXPIRES DD MMM YYYY'
+            const expiryDateMatch = extractedText.match(/EXPIRES \d{2} \w{3} \d{4}/);
+            const expiryDate = expiryDateMatch ? expiryDateMatch[0] : 'Not Found';
+
+            // Scrape the license data using the detected license number
+            const licenseData = await scrapeSIALicenses(licenseNumber.replace(/\s+/g, ''));
+
+            // Add watermark to image
+            const imageWithWatermark = await Jimp.read(uploadPath);
+            const watermark = await Jimp.read(Buffer.from('Virtulum Checks', 'utf-8'));
+            watermark.resize(Jimp.AUTO, 50); // Resize watermark to fit the image
+            imageWithWatermark.composite(watermark, imageWithWatermark.bitmap.width - watermark.bitmap.width - 10, imageWithWatermark.bitmap.height - watermark.bitmap.height - 10, {
+                mode: Jimp.BLEND_SOURCE_OVER,
+                opacitySource: 0.5,
+                opacityDest: 1,
+            });
+
+            const watermarkedImagePath = uploadPath.replace(/(\.\w+)$/, '_watermarked$1');
+            await imageWithWatermark.writeAsync(watermarkedImagePath);
+
+            res.json({
+                name: `${licenseData.firstName} ${licenseData.surname}`,
+                licenseNumber: licenseNumber,
+                expiryDate: expiryDate,
+                status: licenseData.valid ? 'Valid' : 'Invalid',
+                imagePath: path.basename(watermarkedImagePath),
+            });
+        } catch (error) {
+            console.error('Error processing image or extracting data:', error);
+            res.status(500).send('Error processing image or extracting data.');
+        }
     });
-  } catch (error) {
-    console.error('Error processing image:', error);
-    res.status(500).json({ error: 'Error processing image' });
-  }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+    console.log(`Server started on port ${PORT}`);
 });
