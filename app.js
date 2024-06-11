@@ -34,17 +34,17 @@ async function extractTextFromImage(filePath) {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function scrapeSIALicenses(licenseNo, retryCount = 3) {
+  const url = 'https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence';
+  const data = { licenseNo };
+
   try {
-    const response = await axios.post(
-      'https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence',
-      { licenseNo },
-      {
-        timeout: 15000, // Increase timeout to 15 seconds
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const response = await axios.post(url, data, {
+      timeout: 15000, // Increase timeout to 15 seconds
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'axios/0.21.4',
+      },
+    });
 
     const $ = cheerio.load(response.data);
 
@@ -66,7 +66,7 @@ async function scrapeSIALicenses(licenseNo, retryCount = 3) {
       licenseNumber,
       role,
       expiryDate,
-      status
+      status,
     };
   } catch (error) {
     if (retryCount > 0) {
@@ -109,7 +109,7 @@ app.post('/upload', async (req, res) => {
           expiryDate: expiryDate || 'Not Found',
           name: name || 'Not Found',
           isValidLicence: false,
-          error: 'License number not found in image'
+          error: 'License number not found in image',
         });
       }
 
@@ -120,7 +120,7 @@ app.post('/upload', async (req, res) => {
         expiryDate: expiryDate || 'Not Found',
         name: licenseData.valid ? `${licenseData.firstName} ${licenseData.surname}` : 'Not Found',
         isValidLicence: licenseData.valid,
-        error: licenseData.valid ? null : 'Invalid license data'
+        error: licenseData.valid ? null : 'Invalid license data',
       });
     } catch (error) {
       console.error('Error processing image:', error);
