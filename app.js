@@ -31,7 +31,7 @@ async function extractTextFromImage(filePath) {
   }
 }
 
-async function scrapeSIALicenses(licenseNo) {
+async function scrapeSIALicenses(licenseNo, retryCount = 3) {
   try {
     const response = await axios.post(
       'https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence',
@@ -61,6 +61,10 @@ async function scrapeSIALicenses(licenseNo) {
       status
     };
   } catch (error) {
+    if (retryCount > 0) {
+      console.warn(`Retrying... Attempts left: ${retryCount}`);
+      return scrapeSIALicenses(licenseNo, retryCount - 1);
+    }
     console.error('Error scraping SIA website:', error);
     return { valid: false };
   }
