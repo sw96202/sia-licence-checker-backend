@@ -53,12 +53,14 @@ async function extractTextFromImage(imageUrl) {
   return result.fullTextAnnotation ? result.fullTextAnnotation.text : '';
 }
 
-// Function to scrape SIA license data
 async function scrapeSIALicenses(licenseNo) {
   try {
     const response = await axios.post('https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence', {
       licenseNo: licenseNo
     });
+
+    // Log the response data for debugging
+    console.log('SIA Website Response:', response.data);
 
     const $ = cheerio.load(response.data);
 
