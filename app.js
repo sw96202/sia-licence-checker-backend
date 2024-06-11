@@ -82,8 +82,11 @@ app.post('/upload', async (req, res) => {
 
     try {
       const text = await extractTextFromImage(uploadPath);
-      const licenseNo = text.match(/\d{16}/g)?.[0];
-      const expiryDate = text.match(/EXPIRES\s\d{2}\s\w{3}\s\d{4}/g)?.[0];
+
+      const licenseNoMatch = text.match(/\b\d{4}\s\d{4}\s\d{4}\s\d{4}\b/);
+      const licenseNo = licenseNoMatch ? licenseNoMatch[0].replace(/\s/g, '') : null;
+      const expiryDateMatch = text.match(/EXPIRES\s\d{2}\s\w{3}\s\d{4}/);
+      const expiryDate = expiryDateMatch ? expiryDateMatch[0] : 'Not Found';
       const nameMatch = text.match(/(?:EXPIRES\s\d{2}\s\w{3}\s\d{4})\s+([\s\S]+)/);
       const name = nameMatch ? nameMatch[1].trim().split('\n')[0] : 'Not Found';
 
@@ -97,7 +100,7 @@ app.post('/upload', async (req, res) => {
         });
       }
 
-      const licenseData = await scrapeSIALicenses(licenseNo.replace(/\s/g, ''));
+      const licenseData = await scrapeSIALicenses(licenseNo);
 
       res.json({
         licenseNumber: licenseNo || 'Not Found',
