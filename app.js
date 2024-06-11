@@ -31,11 +31,19 @@ async function extractTextFromImage(filePath) {
   }
 }
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function scrapeSIALicenses(licenseNo, retryCount = 3) {
   try {
     const response = await axios.post(
       'https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence',
-      { licenseNo }
+      { licenseNo },
+      {
+        timeout: 15000, // Increase timeout to 15 seconds
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
     );
 
     const $ = cheerio.load(response.data);
@@ -63,6 +71,7 @@ async function scrapeSIALicenses(licenseNo, retryCount = 3) {
   } catch (error) {
     if (retryCount > 0) {
       console.warn(`Retrying... Attempts left: ${retryCount}`);
+      await delay(2000); // Add delay between retries
       return scrapeSIALicenses(licenseNo, retryCount - 1);
     }
     console.error('Error scraping SIA website:', error);
