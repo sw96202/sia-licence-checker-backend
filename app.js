@@ -1,40 +1,42 @@
 const express = require('express');
-const cors = require('cors');
-const fileUpload = require('express-fileupload');
-const vision = require('@google-cloud/vision');
-const Jimp = require('jimp');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const cors = require('cors');
+const fileUpload = require('express-fileupload');
 const path = require('path');
+const { Storage } = require('@google-cloud/storage');
+const vision = require('@google-cloud/vision');
+const Jimp = require('jimp');
 
-// Initialize the app
 const app = express();
-const port = process.env.PORT || 10000;
+const PORT = process.env.PORT || 10000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(fileUpload());
-
-// Google Cloud setup
 const serviceKey = path.join(__dirname, 'service-account-file.json');
-const client = new vision.ImageAnnotatorClient({
-  keyFilename: serviceKey,
-});
+const storage = new Storage({ keyFilename: serviceKey });
+const client = new vision.ImageAnnotatorClient({ keyFilename: serviceKey });
 
-// Function to extract text using Google Cloud Vision
-async function extractText(filePath) {
-  const [result] = await client.textDetection(filePath);
-  const detections = result.textAnnotations;
-  return detections.length ? detections[0].description : 'No text found';
+app.use(cors());
+app.use(fileUpload());
+app.use(express.json());
+app.use(express.static('uploads'));
+
+async function extractTextFromImage(filePath) {
+  try {
+    const [result] = await client.textDetection(filePath);
+    const detections = result.textAnnotations;
+    return detections[0] ? detections[0].description : 'No text found';
+  } catch (error) {
+    console.error('Error detecting text:', error);
+    throw new Error('Error detecting text from image');
+  }
 }
 
-// Function to scrape SIA license data
 async function scrapeSIALicenses(licenseNo) {
   try {
-    const response = await axios.post('https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence', {
-      licenseNo: licenseNo,
-    });
+    const response = await axios.post(
+      'https://services.sia.homeoffice.gov.uk/PublicRegister/SearchPublicRegisterByLicence',
+      { licenseNo }
+    );
 
     const $ = cheerio.load(response.data);
 
@@ -56,7 +58,7 @@ async function scrapeSIALicenses(licenseNo) {
       licenseNumber,
       role,
       expiryDate,
-      status,
+      status
     };
   } catch (error) {
     console.error('Error scraping SIA website:', error);
@@ -64,48 +66,53 @@ async function scrapeSIALicenses(licenseNo) {
   }
 }
 
-// Route to handle file upload
 app.post('/upload', async (req, res) => {
-  if (!req.files || !req.files.file) {
-    return res.status(400).send('No file uploaded.');
+  if (!req.files || !req.files.image) {
+    return res.status(400).send('No image uploaded');
   }
 
-  const file = req.files.file;
-  const filePath = path.join(__dirname, 'uploads', file.name);
+  const image = req.files.image;
+  const uploadPath = path.join(__dirname, 'uploads', image.name);
 
-  file.mv(filePath, async (err) => {
+  image.mv(uploadPath, async (err) => {
     if (err) {
-      return res.status(500).send(err);
+      console.error('Error uploading image:', err);
+      return res.status(500).send('Error uploading image');
     }
 
     try {
-      const text = await extractText(filePath);
-      const licenseNumber = text.match(/\b\d{4} \d{4} \d{4} \d{4}\b/)[0].replace(/\s/g, '');
-      const siaData = await scrapeSIALicenses(licenseNumber);
+      const text = await extractTextFromImage(uploadPath);
+      const licenseNo = text.match(/\d{16}/g)?.[0];
+      const expiryDate = text.match(/EXPIRES\s\d{2}\s\w{3}\s\d{4}/g)?.[0];
+      const nameMatch = text.match(/(?:EXPIRES\s\d{2}\s\w{3}\s\d{4})\s+([\s\S]+)/);
+      const name = nameMatch ? nameMatch[1].trim().split('\n')[0] : 'Not Found';
 
-      if (siaData.valid) {
-        res.json({
-          name: `${siaData.firstName} ${siaData.surname}`,
-          licenseNumber: siaData.licenseNumber,
-          expiryDate: siaData.expiryDate,
-          isValidLicence: siaData.status === 'Active',
-        });
-      } else {
-        res.json({
-          name: 'Not Found',
+      if (!licenseNo) {
+        return res.json({
           licenseNumber: 'Not Found',
-          expiryDate: 'Not Found',
+          expiryDate: expiryDate || 'Not Found',
+          name: name || 'Not Found',
           isValidLicence: false,
+          error: 'License number not found in image'
         });
       }
+
+      const licenseData = await scrapeSIALicenses(licenseNo.replace(/\s/g, ''));
+
+      res.json({
+        licenseNumber: licenseNo || 'Not Found',
+        expiryDate: expiryDate || 'Not Found',
+        name: licenseData.valid ? `${licenseData.firstName} ${licenseData.surname}` : 'Not Found',
+        isValidLicence: licenseData.valid,
+        error: licenseData.valid ? null : 'Invalid license data'
+      });
     } catch (error) {
-      console.error('Error processing file:', error);
-      res.status(500).send('Error processing file.');
+      console.error('Error processing image:', error);
+      res.status(500).send('Failed to process image or license data');
     }
   });
 });
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server started on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
 });
