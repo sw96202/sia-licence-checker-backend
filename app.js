@@ -22,6 +22,10 @@ const client = new vision.ImageAnnotatorClient({ keyFilename: serviceKey });
 const storage = new Storage({ keyFilename: serviceKey });
 const bucketName = process.env.GCLOUD_STORAGE_BUCKET;
 
+if (!bucketName) {
+  throw new Error('A bucket name is needed to use Cloud Storage.');
+}
+
 // Function to upload image to Google Cloud Storage
 async function uploadToStorage(file) {
   const bucket = storage.bucket(bucketName);
