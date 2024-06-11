@@ -60,17 +60,27 @@ async function scrapeSIALicenses(licenseNo) {
     });
 
     // Log the response data for debugging
-    console.log('SIA Website Response:', response.data);
+    console.log('SIA Website Response HTML:', response.data);
 
     const $ = cheerio.load(response.data);
 
     const firstName = $('.ax_paragraph').eq(0).next().find('.ax_h5').text().trim();
+    console.log('First Name:', firstName);
+    
     const surname = $('.ax_paragraph').eq(1).next().find('.ax_h5').text().trim();
+    console.log('Surname:', surname);
+    
     const licenseNumber = $('.ax_paragraph').eq(2).next().find('.ax_h4').text().trim();
+    console.log('License Number:', licenseNumber);
+    
     const role = $('.ax_paragraph').eq(3).next().find('.ax_h4').text().trim();
+    console.log('Role:', role);
     
     const expiryDate = $('.ax_paragraph:contains("Expiry date")').next().find('.ax_h4').text().trim();
+    console.log('Expiry Date:', expiryDate);
+    
     const status = $('.ax_paragraph:contains("Status")').next().find('.ax_h4_green').text().trim();
+    console.log('Status:', status);
 
     if (!firstName || !surname || !licenseNumber || !role || !expiryDate || !status) {
       return { valid: false };
