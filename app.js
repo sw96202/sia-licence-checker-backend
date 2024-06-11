@@ -14,6 +14,11 @@ app.use(fileUpload());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Root route
+app.get('/', (req, res) => {
+  res.send('Backend is running');
+});
+
 // Google Cloud setup
 const serviceKey = path.join(__dirname, 'service-account-file.json');
 const storage = new Storage({ keyFilename: serviceKey });
